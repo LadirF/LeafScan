@@ -938,14 +938,37 @@ async function openExport() {
   prepareFiles();
 }
 
-function prepareFiles() {
+const isAndroid = /Android/i.test(navigator.userAgent);
+let prepToken = 0;
+
+async function prepareFiles() {
+  const token = ++prepToken;
   const name = docName();
+  let files;
   if (exportOpts.fmt === 'pdf') {
     const blob = buildPdf(pages.map((p) => ({ blob: p.out, w: p.w, h: p.h, comps: p.comps })), { size: exportOpts.size, title: name });
-    exportFiles = [new File([blob], name + '.pdf', { type: 'application/pdf' })];
+    files = [new File([blob], name + '.pdf', { type: 'application/pdf' })];
   } else {
-    exportFiles = pages.map((p, i) => new File([p.out], `${name} - ${String(i + 1).padStart(3, '0')}.jpg`, { type: 'image/jpeg' }));
+    files = pages.map((p, i) => new File([p.out], `${name} - ${String(i + 1).padStart(3, '0')}.jpg`, { type: 'image/jpeg' }));
   }
+  // No Android, o arquivo montado com pedaços guardados no IndexedDB chega ilegível
+  // ao WhatsApp (ele fecha sem enviar). Lá o arquivo é copiado para a memória num
+  // bloco só antes do toque em "Compartilhar"; o toque continua imediato.
+  if (isAndroid) {
+    exportFiles = null;
+    $('#exShare').disabled = true;
+    $('#exSave').disabled = true;
+    $('#sheetInfo').textContent = 'Preparando o arquivo…';
+    try {
+      files = await Promise.all(files.map(async (f) => new File([await f.arrayBuffer()], f.name, { type: f.type })));
+    } catch (e) {
+      console.error(e);
+      if (token === prepToken) $('#sheetInfo').textContent = 'Não consegui preparar o arquivo: ' + (e.message || e);
+      return;
+    }
+    if (token !== prepToken || stack[stack.length - 1] !== 'sheet') return;
+  }
+  exportFiles = files;
   const total = exportFiles.reduce((s, f) => s + f.size, 0);
   const n = pages.length;
   $('#sheetInfo').textContent = exportOpts.fmt === 'pdf'
@@ -961,9 +984,8 @@ async function shareFiles() {
   if (!exportFiles) return;
   // No Android, mandar título junto com o arquivo faz o WhatsApp (e outros apps)
   // receber só o texto e descartar o PDF; lá vai só o arquivo, que já leva o nome.
-  const android = /Android/i.test(navigator.userAgent);
   try {
-    await navigator.share(android ? { files: exportFiles } : { files: exportFiles, title: docName() });
+    await navigator.share(isAndroid ? { files: exportFiles } : { files: exportFiles, title: docName() });
   } catch (e) {
     if (e.name !== 'AbortError') {
       toast('Não deu para compartilhar (' + (e.message || e.name) + '). Use “Salvar arquivo” e envie pelo app.', 6000);
