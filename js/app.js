@@ -959,10 +959,15 @@ function prepareFiles() {
 
 async function shareFiles() {
   if (!exportFiles) return;
+  // No Android, mandar título junto com o arquivo faz o WhatsApp (e outros apps)
+  // receber só o texto e descartar o PDF; lá vai só o arquivo, que já leva o nome.
+  const android = /Android/i.test(navigator.userAgent);
   try {
-    await navigator.share({ files: exportFiles, title: docName() });
+    await navigator.share(android ? { files: exportFiles } : { files: exportFiles, title: docName() });
   } catch (e) {
-    if (e.name !== 'AbortError') toast('Não deu para compartilhar: ' + (e.message || e.name));
+    if (e.name !== 'AbortError') {
+      toast('Não deu para compartilhar (' + (e.message || e.name) + '). Use “Salvar arquivo” e envie pelo app.', 6000);
+    }
   }
 }
 
