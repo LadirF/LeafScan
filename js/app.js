@@ -919,6 +919,13 @@ function syncSeg() {
     for (const b of seg.children) b.setAttribute('aria-pressed', String(b.dataset.v === exportOpts[name]));
   }
   $('#sizeField').hidden = exportOpts.fmt !== 'pdf';
+  // Em alguns Android (visto num Xiaomi com Android 10) o sistema abre o app de
+  // destino mas não lhe entrega o arquivo, e nada avisa; fica o caminho manual.
+  const hint = $('#sheetHint');
+  hint.hidden = !isAndroid;
+  hint.innerHTML = exportOpts.fmt === 'pdf'
+    ? 'Se o arquivo não chegar ao WhatsApp, toque em <b>Salvar arquivo</b> e depois, no WhatsApp, use o clipe → <b>Documento</b> e escolha o PDF em Downloads.'
+    : 'Se as imagens não chegarem ao WhatsApp, toque em <b>Salvar arquivo</b> e depois, no WhatsApp, use o clipe → <b>Galeria</b>.';
 }
 
 async function openExport() {
@@ -997,6 +1004,8 @@ async function saveFiles() {
   if (!exportFiles) return;
   if (exportFiles.length > 1) {
     toast('Salvando uma imagem por vez. Se o navegador perguntar, permita vários downloads. No iPhone, prefira “Compartilhar”.', 5000);
+  } else if (isAndroid) {
+    toast('PDF salvo em Downloads. No WhatsApp, toque no clipe → Documento e escolha o arquivo.', 6000);
   }
   for (const f of exportFiles) {
     const a = document.createElement('a');

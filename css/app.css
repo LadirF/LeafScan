@@ -314,6 +314,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .seg button { flex: 1; min-height: 44px; padding: 6px 10px; font-family: var(--font-hand); font-size: 1.1rem; background: var(--paper-cream); box-shadow: var(--shadow-subtle); border: 2px solid transparent; }
 .seg button[aria-pressed="true"] { background: var(--paper-mint); border-color: var(--accent-sage); }
 .sheet-info { font-family: var(--font-hand); font-size: 1.05rem; color: var(--ink-medium); margin: 6px 0 14px; min-height: 1.5em; }
+.sheet-hint { font-size: .92rem; color: var(--ink-medium); background: var(--paper-yellow); padding: 8px 10px; margin: -4px 0 14px; transform: rotate(-.4deg); }
 .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .sheet-close { margin: 14px auto 0; display: flex; }
 
