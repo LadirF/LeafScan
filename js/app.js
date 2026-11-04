@@ -2,7 +2,7 @@
 import * as db from './db.js';
 import {
   loadCV, cvReady, detectDocument, warpDocument, applyFilter, edgeMap, snapCorner,
-  quadIsValid, quadDist, FILTERS,
+  quadIsValid, quadDist, QuadTracker, FILTERS,
 } from './scanner.js';
 import { buildPdf, jpegInfo } from './pdf.js';
 
@@ -320,7 +320,7 @@ async function importFiles(files) {
 // ================================================================ câmera
 
 const cam = {
-  stream: null, track: null, running: false, timer: 0, smooth: null, prev: null, miss: 0,
+  stream: null, track: null, running: false, timer: 0, smooth: null, tracker: new QuadTracker(),
   stable: 0, sharpMax: 0, armed: true, lastCapture: 0, ref: null, lastSig: null, lost: 0,
   capturing: false, auto: pref.get('auto', true), torch: false, wake: null, thumbUrl: '', token: 0,
 };
@@ -387,7 +387,8 @@ async function startCamera() {
       cam.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
     }
     try { cam.wake = await navigator.wakeLock?.request('screen'); } catch { cam.wake = null; }
-    Object.assign(cam, { running: true, smooth: null, prev: null, stable: 0, miss: 0, sharpMax: 0, armed: true });
+    cam.tracker.reset();
+    Object.assign(cam, { running: true, smooth: null, stable: 0, sharpMax: 0, armed: true });
     tick();
   } catch (e) {
     console.warn(e);
@@ -451,35 +452,17 @@ function tick() {
 
 function handleDetection(r, w, h) {
   const now = performance.now();
-  const q = r.quad ? r.quad.map(([x, y]) => [x / w, y / h]) : null;
   cam.lastSig = r.sig;
+  const cands = r.cands.map((c) => ({ score: c.score, quad: c.quad.map(([x, y]) => [x / w, y / h]) }));
+  const q = cam.tracker.update(cands);
+  cam.smooth = q;
+  cam.stable = cam.tracker.steady;
+  cam.sharpMax = cam.stable ? Math.max(cam.sharpMax, r.sharp) : r.sharp;
 
   // depois de uma captura, só volta a disparar quando a página mudar ou sair do quadro
   if (!cam.armed) {
     cam.lost = q ? 0 : cam.lost + 1;
     if (now - cam.lastCapture > 1000 && (cam.lost >= 4 || sigDiff(r.sig, cam.ref) > 16)) cam.armed = true;
-  }
-
-  if (q) {
-    cam.miss = 0;
-    const steady = cam.prev && quadDist(q, cam.prev) < 0.02;
-    cam.prev = q;
-    if (cam.smooth && quadDist(q, cam.smooth) < 0.08) {
-      cam.smooth = cam.smooth.map((p, i) => [p[0] * 0.5 + q[i][0] * 0.5, p[1] * 0.5 + q[i][1] * 0.5]);
-    } else {
-      cam.smooth = q;
-    }
-    if (steady) {
-      cam.stable++;
-      cam.sharpMax = Math.max(cam.sharpMax, r.sharp);
-    } else {
-      cam.stable = 0;
-      cam.sharpMax = r.sharp;
-    }
-  } else {
-    cam.miss++;
-    cam.stable = 0;
-    if (cam.miss > 3) { cam.smooth = null; cam.prev = null; }
   }
 
   const progress = cam.auto && cam.armed && q ? cam.stable / STABLE_FRAMES : 0;
@@ -549,6 +532,7 @@ async function capture() {
   flash();
   const liveQ = cam.smooth && cam.stable >= 2 ? cam.smooth.map((p) => p.slice()) : null;
   Object.assign(cam, { ref: cam.lastSig, armed: false, lost: 0, lastCapture: performance.now(), stable: 0 });
+  cam.tracker.steady = 0;
   setRing(0);
   try {
     const c = scaledCanvas(v, MAX_ORIG);
@@ -1119,13 +1103,11 @@ async function init() {
   renderPages();
   for (const p of pages) if (!p.out) enqueue(p);
 
-  const st = $('#engineStatus');
-  loadCV().then(() => {
-    st.textContent = 'Motor de imagem pronto ✓';
-    st.className = 'engine ok';
-  }).catch((e) => {
+  // o carregamento do motor é silencioso; só avisa se falhar
+  loadCV().catch((e) => {
+    const st = $('#engineStatus');
     st.textContent = e.message;
-    st.className = 'engine err';
+    st.hidden = false;
   });
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

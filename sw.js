@@ -1,5 +1,5 @@
 // Guarda o app e o motor de imagem no aparelho, para abrir rápido e funcionar sem internet.
-const VERSION = 'leafscan-v1';
+const VERSION = 'leafscan-v2';
 const SHELL = [
   './', './index.html', './css/app.css', './js/app.js', './js/scanner.js', './js/pdf.js', './js/db.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',

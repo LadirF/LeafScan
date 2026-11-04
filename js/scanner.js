@@ -153,6 +153,42 @@ function quadSupport(data, W, H, q) {
   return s / 4;
 }
 
+// Contraste médio (-1 a 1) entre um ponto logo dentro e outro logo fora de cada
+// lado. Folha clara sobre fundo escuro dá perto de 1; a moldura de uma prancheta
+// escura sobre a mesa dá perto de 0. Pontos fora da imagem não contam.
+function sideContrast(lum, W, H, q, off) {
+  const cx = (q[0][0] + q[1][0] + q[2][0] + q[3][0]) / 4;
+  const cy = (q[0][1] + q[1][1] + q[2][1] + q[3][1]) / 4;
+  const at = (x, y) => {
+    x = Math.round(x); y = Math.round(y);
+    return x < 0 || y < 0 || x >= W || y >= H ? -1 : lum[y * W + x];
+  };
+  let sum = 0, n = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = q[i], b = q[(i + 1) % 4];
+    let nx = -(b[1] - a[1]), ny = b[0] - a[0];
+    const L = Math.hypot(nx, ny) || 1;
+    nx /= L; ny /= L;
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    if (nx * (cx - mx) + ny * (cy - my) < 0) { nx = -nx; ny = -ny; } // normal para dentro
+    for (let k = 1; k <= 8; k++) {
+      const t = k / 9;
+      const px = a[0] + (b[0] - a[0]) * t, py = a[1] + (b[1] - a[1]) * t;
+      const inside = at(px + nx * off, py + ny * off), outside = at(px - nx * off, py - ny * off);
+      if (inside < 0 || outside < 0) continue;
+      sum += (inside - outside) / 255;
+      n++;
+    }
+  }
+  return n >= 8 ? sum / n : 0;
+}
+
+// Quantos cantos estão colados na borda da imagem (folha cortada ou contorno falso).
+function cornersAtBorder(q, W, H) {
+  const m = Math.min(W, H) * 0.015;
+  return q.filter(([x, y]) => x < m || y < m || x > W - m || y > H - m).length;
+}
+
 function anglesOk(q) {
   for (let i = 0; i < 4; i++) {
     const p = q[(i + 3) % 4], c = q[i], n = q[(i + 1) % 4];
@@ -244,22 +280,107 @@ export function detectDocument(src) {
     cv.morphologyEx(tmp, mask, cv.MORPH_CLOSE, kClose);
     quadsFromBinary(cv, mask, minArea, cands);
 
-    let best = null;
-    const data = ref.data;
+    // Nota de cada candidato. A área entra só pela raiz, para a moldura maior
+    // (prancheta, tela, mesa) não ganhar da folha; pesam mais a borda real nos
+    // 4 lados e o contraste papel × fundo logo dentro e fora de cada lado.
+    const scored = [];
+    const data = ref.data, lum = blur.data;
+    const minDim = Math.min(W, H);
     for (const q of cands) {
       if (!isConvex(q) || !anglesOk(q)) continue;
       let minSide = Infinity;
       for (let i = 0; i < 4; i++) minSide = Math.min(minSide, dist(q[i], q[(i + 1) % 4]));
-      if (minSide < Math.min(W, H) * 0.15) continue;
+      if (minSide < minDim * 0.15) continue;
       const sup = quadSupport(data, W, H, q);
-      if (sup < 0.5) continue;
-      const score = (quadArea(q) / (W * H)) * sup * sup;
-      if (!best || score > best.score) best = { quad: q, support: sup, score };
+      if (sup < 0.45) continue;
+      const con = sideContrast(lum, W, H, q, minDim * 0.03);
+      const edge = cornersAtBorder(q, W, H);
+      const score = Math.sqrt(quadArea(q) / (W * H)) * sup * sup *
+        (0.12 + Math.max(con, -0.5 * con)) * (edge >= 2 ? 0.2 : edge === 1 ? 0.55 : 1);
+      scored.push({ quad: q, support: sup, score });
     }
-    return { quad: best ? best.quad : null, support: best ? best.support : 0, sharp, sig: signature };
+    scored.sort((a, b) => b.score - a.score);
+    // tira quase-duplicatas (o mesmo contorno achado por modos diferentes)
+    const tol = Math.max(W, H) * 0.03;
+    const list = [];
+    for (const c of scored) {
+      if (list.every((o) => quadDist(o.quad, c.quad) > tol)) list.push(c);
+      if (list.length === 6) break;
+    }
+    const best = list[0] || null;
+    return { quad: best ? best.quad : null, support: best ? best.support : 0, cands: list, sharp, sig: signature };
   } finally {
     chans.delete();
     for (const m of mats) m.delete();
+  }
+}
+
+// Acompanha a folha de um quadro para o outro na câmera ao vivo. Uma detecção
+// solta não substitui a folha que já está sendo seguida: só troca quando outro
+// contorno fica bem melhor por vários quadros seguidos, e um sumiço rápido
+// (mão passando, reflexo) não apaga o contorno. Coordenadas normalizadas (0–1).
+export class QuadTracker {
+  constructor() { this.reset(); }
+
+  reset() {
+    this.quad = null;     // contorno mostrado (suavizado)
+    this.raw = null;      // última detecção aceita
+    this.steady = 0;      // quadros seguidos quase parados
+    this.miss = 0;
+    this.pending = null;  // candidato à troca
+    this.pendingN = 0;
+  }
+
+  _vote(q) {
+    if (this.pending && quadDist(q, this.pending) < 0.07) this.pendingN++;
+    else { this.pending = q; this.pendingN = 1; }
+    this.pending = q;
+    return this.pendingN;
+  }
+
+  // cands: [{ quad, score }] em ordem decrescente de nota.
+  // Notas medidas em vídeo real: folha bem visível 0,18–0,41; contornos falsos
+  // (câmera em movimento, objetos da mesa) quase sempre abaixo de 0,1.
+  update(cands) {
+    const SHOW = 0.12, KEEP = 0.04;
+    const best = cands[0] && cands[0].score >= SHOW ? cands[0] : null;
+    let pick = null;
+    if (this.quad) {
+      const near = cands.find((c) => c.score >= KEEP && quadDist(c.quad, this.quad) < 0.07) || null;
+      if (near && (!best || best === near || best.score < near.score * 2)) {
+        pick = near;
+        this.pending = null;
+        this.pendingN = 0;
+      } else if (best && this._vote(best.quad) >= (near ? 4 : 2)) {
+        // outro contorno venceu: com a folha antiga ainda à vista, só depois de
+        // 4 quadros; se ela sumiu (câmera mudou de lugar), depois de 2
+        pick = best;
+        this.quad = null;
+        this.pending = null;
+        this.pendingN = 0;
+      } else {
+        pick = near;
+      }
+    } else if (best && this._vote(best.quad) >= 2) {
+      pick = best;            // aparece só depois de confirmado em 2 quadros
+      this.pending = null;
+      this.pendingN = 0;
+    }
+
+    if (pick) {
+      this.miss = 0;
+      const moved = this.raw ? quadDist(pick.quad, this.raw) : 1;
+      this.raw = pick.quad;
+      // só conta como "firme" com a folha bem vista (mão por cima não dispara a foto)
+      this.steady = moved < 0.02 && pick.score >= SHOW ? this.steady + 1 : 0;
+      this.quad = this.quad
+        ? this.quad.map((p, i) => [p[0] * 0.55 + pick.quad[i][0] * 0.45, p[1] * 0.55 + pick.quad[i][1] * 0.45])
+        : pick.quad.map((p) => p.slice());
+    } else {
+      this.steady = 0;
+      if (this.quad && ++this.miss > 6) { this.quad = null; this.raw = null; }
+    }
+    return this.quad;
   }
 }
 

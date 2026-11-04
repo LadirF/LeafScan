@@ -176,9 +176,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .empty { background: var(--paper-white); box-shadow: var(--shadow-medium); padding: 22px 22px 28px; color: var(--ink-medium); }
 .empty-title { font-family: var(--font-display); font-size: 1.9rem; color: var(--ink-dark); margin-bottom: 6px; }
 .empty p + p { margin-top: 8px; }
-.engine { font-family: var(--font-hand); font-size: 1rem; color: var(--ink-light); }
-.engine.ok { color: var(--accent-sage-dark); }
-.engine.err { color: var(--accent-coral-dark); }
+.engine { font-family: var(--font-hand); font-size: 1rem; color: var(--accent-coral-dark); }
 
 .action-bar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
