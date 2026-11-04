@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LeafScan · teste de compartilhar</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Patrick+Hand&family=Nunito:wght@400;700&display=swap">
+<style>
+  :root { --cream: #faf8f5; --ink: #2c2c2c; --coral: #e07a5f; --sage: #7d9a78; --rose: #f5e1e1; --mint: #e1f0e8; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Nunito', system-ui, sans-serif; background: var(--cream); color: var(--ink); padding: 20px 16px 40px; line-height: 1.45; }
+  h1 { font-family: 'Caveat', cursive; font-size: 2.4rem; line-height: 1; margin-bottom: 6px; }
+  p.lead { font-family: 'Patrick Hand', cursive; font-size: 1.15rem; color: #5c5c5c; margin-bottom: 16px; }
+  ol { list-style: none; display: grid; gap: 12px; }
+  li { background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.08); padding: 12px 14px; }
+  button { font-family: 'Patrick Hand', cursive; font-size: 1.15rem; width: 100%; min-height: 48px; border: 0; background: var(--coral); color: #fff; cursor: pointer; }
+  .what { font-size: .92rem; color: #5c5c5c; margin: 6px 0 4px; }
+  .res { font-family: 'Patrick Hand', cursive; font-size: 1.05rem; min-height: 1.4em; }
+  .res.ok { color: #4f6b4b; } .res.err { color: #b04a33; }
+  pre { margin-top: 18px; white-space: pre-wrap; word-break: break-word; font-size: .8rem; background: #fff; padding: 10px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+</style>
+</head>
+<body>
+<h1>Teste de compartilhar</h1>
+<p class="lead">Toque em cada botão, escolha o WhatsApp e uma conversa. Depois conte quais chegaram no WhatsApp.</p>
+<ol id="tests"></ol>
+<pre id="env"></pre>
+<script type="module">
+import { buildPdf } from './js/pdf.js';
+
+// página de exemplo: um JPEG pequeno desenhado na hora
+async function sampleJpeg() {
+  const c = document.createElement('canvas');
+  c.width = 620; c.height = 877;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = '#2c2c2c'; g.font = 'bold 34px serif'; g.fillText('LeafScan - teste', 60, 100);
+  g.font = '20px serif';
+  for (let y = 160; y < 800; y += 34) g.fillText('Linha de texto de exemplo para o teste de compartilhar.', 60, y);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+  return { blob, w: c.width, h: c.height };
+}
+
+const page = await sampleJpeg();
+const pdfBytes = await buildPdf([{ blob: page.blob, w: page.w, h: page.h, comps: 3 }], { title: 'teste' }).arrayBuffer();
+const jpgBytes = await page.blob.arrayBuffer();
+const pdf = (name) => new File([pdfBytes], name, { type: 'application/pdf' });
+
+const TESTS = [
+  { label: '1. Só texto', what: 'Mostra se o WhatsApp recebe qualquer coisa do navegador.',
+    data: () => ({ text: 'Teste do LeafScan: texto' }) },
+  { label: '2. Imagem JPG', what: 'Uma foto pequena, sem texto junto.',
+    data: () => ({ files: [new File([jpgBytes], 'teste.jpg', { type: 'image/jpeg' })] }) },
+  { label: '3. PDF, nome simples', what: 'PDF pequeno chamado "teste.pdf".',
+    data: () => ({ files: [pdf('teste.pdf')] }) },
+  { label: '4. PDF, nome com espaços', what: 'O mesmo PDF, com nome no formato que o app usa.',
+    data: () => ({ files: [pdf('Documento 04-11-2026 12h00.pdf')] }) },
+  { label: '5. PDF com texto junto', what: 'PDF e uma frase na mesma mensagem.',
+    data: () => ({ files: [pdf('teste.pdf')], text: 'Segue o documento' }) },
+  { label: '6. PDF como arquivo genérico', what: 'O mesmo PDF, mas avisado ao sistema como "arquivo qualquer".',
+    data: () => ({ files: [new File([pdfBytes], 'teste.pdf', { type: 'application/octet-stream' })] }) },
+];
+
+const list = document.getElementById('tests');
+for (const t of TESTS) {
+  const li = document.createElement('li');
+  li.innerHTML = `<button></button><p class="what"></p><p class="res"></p>`;
+  li.querySelector('button').textContent = t.label;
+  li.querySelector('.what').textContent = t.what;
+  const res = li.querySelector('.res');
+  li.querySelector('button').addEventListener('click', async () => {
+    const data = t.data();
+    if (data.files && !(navigator.canShare && navigator.canShare({ files: data.files }))) {
+      res.textContent = 'O navegador recusou antes de abrir (canShare = não).';
+      res.className = 'res err';
+      return;
+    }
+    res.textContent = 'Abrindo…';
+    res.className = 'res';
+    const t0 = performance.now();
+    try {
+      await navigator.share(data);
+      res.textContent = `O navegador diz que entregou (${Math.round(performance.now() - t0)} ms). Chegou no WhatsApp?`;
+      res.className = 'res ok';
+    } catch (e) {
+      res.textContent = `Erro: ${e.name}${e.message ? ' – ' + e.message : ''}`;
+      res.className = 'res err';
+    }
+  });
+  list.append(li);
+}
+
+const standalone = matchMedia('(display-mode: standalone)').matches;
+document.getElementById('env').textContent =
+  `Navegador: ${navigator.userAgent}\n` +
+  `Aberto como app instalado: ${standalone ? 'sim' : 'não'}\n` +
+  `Compartilhar disponível: ${typeof navigator.share === 'function' ? 'sim' : 'não'}\n` +
+  `Aceita PDF: ${navigator.canShare ? (navigator.canShare({ files: [pdf('teste.pdf')] }) ? 'sim' : 'não') : 'sem canShare'}\n` +
+  `Tamanho do PDF de teste: ${Math.round(pdfBytes.byteLength / 1024)} KB`;
+</script>
+</body>
+</html>
